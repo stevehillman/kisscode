@@ -3815,6 +3815,7 @@ End Sub
 ' in this table this colors are use to keep track of the progress during the modes
 
 'colors
+Const magenta = 14
 Const cyan = 13
 Const midblue = 12
 Const ice = 11
@@ -3843,6 +3844,9 @@ Const teal = 0
 Sub SetLightColor(n, col, stat) 'stat 0 = off, 1 = on, 2 = blink, -1= no change
     Dim color,colorfull
     Select Case col
+        Case magenta
+            color = RGB(16,4,16)
+            colorfull = RGB(255,64,224)
         Case cyan
             color = RGB(0,18,18)
             colorfull = RGB(0, 224, 240)
@@ -3872,7 +3876,7 @@ Sub SetLightColor(n, col, stat) 'stat 0 = off, 1 = on, 2 = blink, -1= no change
             colorfull = RGB(0, 192, 0)
         Case blue
             color = RGB(0, 18, 18)
-            colorfull = RGB(0, 160, 255)
+            colorfull = RGB(4, 192, 255)
         Case darkblue
             color = RGB(0, 8, 8)
             colorfull = RGB(0, 64, 64)
@@ -4446,6 +4450,8 @@ Dim bKissTargets(4)
 Dim bArmyTargets(4)
 Dim bLockTargets(2)
 Dim bStarTargets(4)
+Dim bKissLights(4)
+Dim bArmyLights(4)
 Dim KissTargetsCompleted        ' Number of times KISS target bank has been completed
 Dim ArmyTargetsCompleted
 
@@ -4492,13 +4498,19 @@ End Class
 
 Dim ModeLights
 ModeLights = Array(li90,li90,li100,li105,li111,li124,li130)
+Dim ModeColours
+ModeColours = Array(ice,rockandroll=ice,detroitrockcity=yellow,lickitup=white,loveitloud=amber)
 
 Class cMode
     Dim ModeState
     Dim CurrentMode
     Dim ShotMask
-    Dim ModeShotsCompleted
+    Dim ModeShotsCompleted  ' Used for scoring - resets at beginning of ball
+    Dim ShotsMade           ' Used to track progress in Detroit Rock City and Love It Loud
     Dim BaseScore
+    Dim ModeScore
+    Dim bModeComplete
+    Dim ModeColour
 
     Public Property Get GetMode : GetMode = CurrentMode : End Property
     Public Property Let SetMode(m) : CurrentMode = m : End Property
@@ -4507,13 +4519,15 @@ Class cMode
         Dim i,t
         t=False
         For i = 1 to 6
-            If (ShotMask And (2^i)) > 0 Then
+            If (ShotMask And (2^i)) > 0 And bModeComplete=False Then
                 If t=False and CurrentMode=DetroitRockCity Then
                     SetLightColor ModeLights(i),ice,2
                     t=true
                 Else
                     SetLightColor ModeLights(i),ice,1
                 End If
+            Else
+                SetLightColor ModeLights(i),ice,0
             End If
         Next
         If (ShotMask And 128) > 0 Then SetKissLights True
@@ -4522,42 +4536,140 @@ Class cMode
     Sub StartMode
         Dim i
         ModeState = 1
+        bModeComplete = False
         ModeShotsCompleted = 0
         BaseScore = 250000
         Select Case CurrentMode
-            Case Duece: BaseScore = 300000 : ShotMask=6      'two left-most shots lit
-            Case Hotter: ShotMask=128   'KISS targets
-            Case LickItUp: i = RndNbr(4) : ShotMask = 2^i + 2^(i+1)    ' two neighbouring shots lit
-            Case ShoutIt: ShotMask = 2^CenterRamp   ' TODO: Figure out scoring for ShoutIt 
-            Case DetroitRockCity: BaseScore = 200000 : ShotMask = 126    ' All major shots lit
-            Case RockAllNight: BaseScore = 500000 : ShotMask = 2^CenterRamp
-            Case LoveItLoud: ShotMask = 2^LeftOrbit + 2^RightOrbit
-            Case BlackDiamond: BaseScore = 300000 : Shotmask = 2^RightOrbit
+            Case Duece:           ModeColour=blue   : BaseScore = 300000 : ShotMask=6      'two left-most shots lit
+            Case Hotter:          ModeColour=white  : ShotMask=128   'KISS targets
+            Case LickItUp:        ModeColour=magenta: BaseScore = 250000 : i=RndNbr(5) : ShotMask = 2^i + 2^(i+1)    ' two neighbouring shots lit
+            Case ShoutIt:         ModeColour=cyan   : ShotMask = 2^CenterRamp   ' TODO: Figure out scoring for ShoutIt 
+            Case DetroitRockCity: ModeColour=yellow : BaseScore = 200000 : ShotMask = 126    ' All major shots lit
+            Case RockAllNight:    ModeColour=ice    : BaseScore = 500000 : ShotMask = 2^CenterRamp
+            Case LoveItLoud:      ModeColour=amber  : BaseScore = 300000 : ShotMask = 2^LeftOrbit + 2^RightOrbit
+            Case BlackDiamond:    ModeColour=green  : BaseScore = 300000 : Shotmask = 2^RightOrbit
         End Select
 
         SetModeLights
     End Sub
 
     Sub ResetForNewBall
-        ModeShotsCompleted = 0
+        ModeScore = 0
+        ModeShotsCompleted = 0  ' didn't reset for Rock&Roll All Night
     End Sub
 
     ' Check switch hits against mode (song) rules
     Sub CheckModeHit(sw)
-        Dim AwardScore
+        Dim AwardScore,i
 
-        if (ShotMask And (2^sw)) = 0 Then ' Shot wasn't lit
-            ' Anything to do here?
-            Exit Sub
-        End If 
+        if (ShotMask And (2^sw)) = 0 Or bModeComplete Then Exit Sub' Shot wasn't lit
 
         ModeShotsCompleted = ModeShotsCompleted + 1
+        'TODO: Award score is doubled sometimes
         AwardScore = BaseScore*ModeShotsCompleted
 
         Select Case CurrentMode
-            Case Duece
+            Case Duece:
+                ModeState = ModeState+1
+                If ModeState >= 9 Then
+                    bModeComplete = True
+                ElseIf ModeState < 6 Then
+                    ShotMask = 2^ModeState+2^(ModeState+1)
+                Else ' Set up Duece light timer to cycle lights across playfield
+                    tmrDueceMode.Enabled = False
+                    tmrDueceMode.Interval = (9-ModeState)*500
+                    tmrDueceMode.Enabled = True
+                    ShotMask = 6
+                End If
+            Case Hotter:
+                ModeState = ModeState+1
+                If ModeState >= 9 Then
+                    bModeComplete = True
+                ElseIf (ModeState MOD 2) = 0 Then
+                    ShotMask = 2^RndNbr(6)
+                Else
+                    ShotMask = 128
+                End If
+                If ModeState > 7 Then AwardScore=AwardScore*2
+            Case LickItUp:
+                ModeState = ModeState+1
+                If ModeState >= 9 Then
+                    bModeComplete = True
+                Else
+                    i = RndNbr(5) : ShotMask = 2^i + 2^(i+1)
+                End If
+            Case ShoutIt:
+                ' Mode needs fleshing out. This is all we have:
+                ' "Shoot center ramp, then orbits, then STAR targets, right ramp and demon. Scoring is (?)"
+                ShotMask = ShotMask Xor (2^sw)
+                If ShotMask = 0 Then ModeState=ModeState+1
+                If ModeState >= 4 Then
+                    bModeComplete = True
+                Else
+                    Select Case ModeState
+                        Case 2: 66  ' left orbit + right orbit
+                        Case 3: 52  ' STAR target + demon + right ramp
+                    End Select
+                End If
+            Case DetroitRockCity:
+                ShotMask = ShotMask Xor (2^sw)
+                ShotsMade=ShotsMade+1
+                If ModeState=2 And ShotsMade >= 3 Then bModeComplete=True
+                If ShotMask = 0 Then ModeState=ModeState+1 : ShotMask = 126 : ShotsMade=0
+                If (ShotMask And ((2^sw)-1)) = 0 Then AwardScore=AwardScore*2   'Leftmost lit shot was hit
+            Case RockAllNight:
+                Select Case ModeState
+                    Case 1: ShotMask=2^RightOrbit
+                    Case 2: ShotMask=6 'Left orbit + STAR
+                    Case 3: ShotMask=96 ' Right orbit + right ramp
+                    Case 4,6: ShotMask=14 ' left orbit, STAR, Center ramp
+                    Case 5,7: ShotMask=112 ' right orbit, right ramp, demon
+                    Case 8: bModeComplete = True
+                End Select
+                ModeState=ModeState+1
+            Case LoveItLoud:
+                If ModeState=1 Then
+                    ShotMask = ShotMask Xor (2^sw)
+                    If ShotMask=0 Then ModeState=2 : ShotsMade=0 : ShotMask=60 ' 4 inner shots
+                Else
+                    ShotMask = 60 Xor (2^sw)
+                    ShotsMade=ShotsMade+1
+                    If ShotsMade >= 8 Then bModeComplete=True
+                End If
+            Case BlackDiamond:
+                ModeState = ModeState+1
+                If ModeState >= 9 Then
+                    bModeComplete = True
+                Else
+                    If sw=RightOrbit Then ShotMask = 2^(RndNbr(4)+1) Else ShotMask=64
+                End if
+        End Select
+        SetModeLights
+
+        ' TODO: Do a 'hit' scene
+        AddScore AwardScore
+        ModeScore = ModeScore+AwardScore
+    End Sub
+
+    Sub BlackDiamondPopHit
+        Dim OldMask
+        If CurrentMode <> BlackDiamond Or (ModeState MOD 2) <> 0 Then Exit Sub
+        OldMask = ShotMask
+        Do
+            ShotMask = 2^(RndNbr(4)+1)
+        Loop While ShotMask=OldMask
+        SetModeLights
+    End Sub
+
+    Sub DueceTimer
+        ShotMask=ShotMask*2
+        If ShotMask=96 Then ShotMask=6
+        SetModeLights
+    End Sub
 
 End Class
+
+Sub tmrDueceMode : Mode(CurrentPlayer).DueceTimer : End Sub
 
 
 
